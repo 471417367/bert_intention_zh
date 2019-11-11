@@ -19,3 +19,11 @@
 2.2、并下载[bert源代码](https://github.com/google-research/bert)，存放在路径下bert文件夹中  
 2.3、参考run_classifier.py文件，创建自己的训练文件bert-intention-train-pd.py  
 2.4、python bert-intention-train-pd.py运行即可开始训练  
+
+
+
+
+
+
+
+

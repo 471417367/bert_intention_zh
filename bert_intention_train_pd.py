@@ -31,6 +31,8 @@ master = None
 num_tpu_cores = 8
 do_lower_case = True
 
+labels_list = ['时间', '地点', '材料', '余额', '其他']
+
 
 class InputExample(object):
     def __init__(self, guid, text_a, text_b=None, label=None):
@@ -98,7 +100,7 @@ class ClassificationProcessor(DataProcessor):
         return examples
 
     def get_labels(self):
-        return ["公司章程", "委托运输合同", "质量管理制度", "其他"]
+        return labels_list
 
 
 def convert_single_example(example, label_list, max_seq_length, tokenizer):
@@ -283,15 +285,7 @@ def model_fn_builder(bert_config, num_labels, init_checkpoint, learning_rate,
         if init_checkpoint:
             (assignment_map, initialized_variable_names
              ) = modeling.get_assignment_map_from_checkpoint(tvars, init_checkpoint)
-            if use_tpu:
-
-                def tpu_scaffold():
-                    tf.train.init_from_checkpoint(init_checkpoint, assignment_map)
-                    return tf.train.Scaffold()
-
-                scaffold_fn = tpu_scaffold
-            else:
-                tf.train.init_from_checkpoint(init_checkpoint, assignment_map)
+            tf.train.init_from_checkpoint(init_checkpoint, assignment_map)
 
         tf.logging.info("**** Trainable Variables ****")
         for var in tvars:
@@ -383,8 +377,7 @@ def input_fn_builder(features, seq_length, is_training, drop_remainder):
     return input_fn
 
 
-def convert_examples_to_features(examples, label_list, max_seq_length,
-                                 tokenizer):
+def convert_examples_to_features(examples, label_list, max_seq_length, tokenizer):
     features = []
     for (ex_index, example) in enumerate(examples):
         if ex_index % 10000 == 0:
@@ -401,6 +394,8 @@ def convert_examples_to_features(examples, label_list, max_seq_length,
 1.允许将模型加载到内存里。允许一次加载，多次预测。
 2.允许读取非文件中的样本进行预测。譬如从标准输入流读取样本输入。
 '''
+
+
 def serving_input_fn():
     label_ids = tf.placeholder(tf.int32, [None], name='label_ids')
     input_ids = tf.placeholder(tf.int32, [None, max_seq_length], name='input_ids')
@@ -435,14 +430,10 @@ def main(_):
             num_shards=num_tpu_cores,
             per_host_input_for_training=is_per_host))
 
-    train_examples = None
-    num_train_steps = None
-    num_warmup_steps = None
-    if do_train:
-        train_examples = processor.get_train_examples(data_dir)
-        num_train_steps = int(
-            len(train_examples) / train_batch_size * num_train_epochs)
-        num_warmup_steps = int(num_train_steps * warmup_proportion)
+    train_examples = processor.get_train_examples(data_dir)
+    num_train_steps = int(
+        len(train_examples) / train_batch_size * num_train_epochs)
+    num_warmup_steps = int(num_train_steps * warmup_proportion)
 
     model_fn = model_fn_builder(
         bert_config=bert_config,
@@ -462,56 +453,54 @@ def main(_):
         eval_batch_size=eval_batch_size,
         predict_batch_size=predict_batch_size)
 
-    if do_train:
-        train_file = os.path.join(output_dir, "train.tf_record")
-        file_based_convert_examples_to_features(
-            train_examples, label_list, max_seq_length, tokenizer, train_file)
-        tf.logging.info("***** Running training *****")
-        tf.logging.info("  Num examples = %d", len(train_examples))
-        tf.logging.info("  Batch size = %d", train_batch_size)
-        tf.logging.info("  Num steps = %d", num_train_steps)
-        train_input_fn = file_based_input_fn_builder(
-            input_file=train_file,
-            seq_length=max_seq_length,
-            is_training=True,
-            drop_remainder=True)
-        estimator.train(input_fn=train_input_fn, max_steps=num_train_steps)
+    train_file = os.path.join(output_dir, "train.tf_record")
+    file_based_convert_examples_to_features(
+        train_examples, label_list, max_seq_length, tokenizer, train_file)
+    tf.logging.info("***** Running training *****")
+    tf.logging.info("  Num examples = %d", len(train_examples))
+    tf.logging.info("  Batch size = %d", train_batch_size)
+    tf.logging.info("  Num steps = %d", num_train_steps)
+    train_input_fn = file_based_input_fn_builder(
+        input_file=train_file,
+        seq_length=max_seq_length,
+        is_training=True,
+        drop_remainder=True)
+    estimator.train(input_fn=train_input_fn, max_steps=num_train_steps)
 
-    if do_eval:
-        eval_examples = processor.get_dev_examples(data_dir)
-        num_actual_eval_examples = len(eval_examples)
+    eval_examples = processor.get_dev_examples(data_dir)
+    num_actual_eval_examples = len(eval_examples)
 
-        eval_file = os.path.join(output_dir, "eval.tf_record")
-        file_based_convert_examples_to_features(
-            eval_examples, label_list, max_seq_length, tokenizer, eval_file)
+    eval_file = os.path.join(output_dir, "eval.tf_record")
+    file_based_convert_examples_to_features(
+        eval_examples, label_list, max_seq_length, tokenizer, eval_file)
 
-        tf.logging.info("***** Running evaluation *****")
-        tf.logging.info("  Num examples = %d (%d actual, %d padding)",
-                        len(eval_examples), num_actual_eval_examples,
-                        len(eval_examples) - num_actual_eval_examples)
-        tf.logging.info("  Batch size = %d", eval_batch_size)
+    tf.logging.info("***** Running evaluation *****")
+    tf.logging.info("  Num examples = %d (%d actual, %d padding)",
+                    len(eval_examples), num_actual_eval_examples,
+                    len(eval_examples) - num_actual_eval_examples)
+    tf.logging.info("  Batch size = %d", eval_batch_size)
 
-        eval_steps = None
+    eval_steps = None
 
-        eval_drop_remainder = True if use_tpu else False
-        eval_input_fn = file_based_input_fn_builder(
-            input_file=eval_file,
-            seq_length=max_seq_length,
-            is_training=False,
-            drop_remainder=eval_drop_remainder)
+    eval_drop_remainder = True if use_tpu else False
+    eval_input_fn = file_based_input_fn_builder(
+        input_file=eval_file,
+        seq_length=max_seq_length,
+        is_training=False,
+        drop_remainder=eval_drop_remainder)
 
-        result = estimator.evaluate(input_fn=eval_input_fn, steps=eval_steps)
+    result = estimator.evaluate(input_fn=eval_input_fn, steps=eval_steps)
 
-        output_eval_file = os.path.join(output_dir, "eval_results.txt")
-        with tf.gfile.GFile(output_eval_file, "w") as writer:
-            tf.logging.info("***** Eval results *****")
-            for key in sorted(result.keys()):
-                tf.logging.info("  %s = %s", key, str(result[key]))
-                writer.write("%s = %s\n" % (key, str(result[key])))
+    output_eval_file = os.path.join(output_dir, "eval_results.txt")
+    with tf.gfile.GFile(output_eval_file, "w") as writer:
+        tf.logging.info("***** Eval results *****")
+        for key in sorted(result.keys()):
+            tf.logging.info("  %s = %s", key, str(result[key]))
+            writer.write("%s = %s\n" % (key, str(result[key])))
 
     estimator._export_to_tpu = False
-    estimator.export_savedmodel('/my_model', serving_input_fn)
-    print('OK' * 100)
+    estimator.export_savedmodel('/my_model/', serving_input_fn)
+    print('*' * 100)
 
 
 if __name__ == "__main__":
