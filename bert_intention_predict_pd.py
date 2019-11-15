@@ -3,7 +3,7 @@ from bert import tokenization
 import tensorflow as tf
 import numpy as np
 
-bert_config_file = '/chinese_L-12_H-768_A-12/bert_config.json'
+bert_config_file = '/opt/chinese_L-12_H-768_A-12/bert_config.json'
 max_seq_length = 128
 
 
@@ -60,9 +60,9 @@ def convert_single_example(example, label_map, max_seq_length, tokenizer):
 
 def main(_):
     # /my_model/ 文件夹下的模型名字
-    predict_fn = tf.contrib.predictor.from_saved_model('/my_model/intention_model')
+    predict_fn = tf.contrib.predictor.from_saved_model('/opt/my_model/intention_model')
 
-    label_list = ['时间', '地点', '材料', '余额', '其他']
+    label_list = ['受理时效', '地点', '材料', '余额', '其他']
     label_map = {}
     for (i, label) in enumerate(label_list, 1):
         label_map[label] = i

@@ -15,13 +15,13 @@ init_checkpoint = '/opt/chinese_L-12_H-768_A-12/bert_model.ckpt'
 # 模型训练结果的检查点文件保存路径
 output_dir = './output/result_dir/'
 # 序列最大输入长度（包含了头尾）
-max_seq_length = 128
+max_seq_length = 64
 train_batch_size = 8
 eval_batch_size = 2
 # Adam 学习率
 learning_rate = 2e-5
 # 训练迭代次数
-num_train_epochs = 10.0
+num_train_epochs = 5.0
 
 predict_batch_size = 1
 warmup_proportion = 0.1
@@ -227,31 +227,13 @@ def create_model(bert_config, is_training, input_ids, input_mask, segment_ids,
         use_one_hot_embeddings=use_one_hot_embeddings)
 
     output_layer = model.get_pooled_output()
+    from text_cnn import TextCNN
+    text_cnn = TextCNN(embedded_chars=output_layer, filter_sizes=[3, 4, 5], num_filter=128, labels=labels,
+                       num_label=num_labels, dropout_rate=0.5, max_len=max_seq_length, is_training=True)
 
-    hidden_size = output_layer.shape[-1].value
+    loss, logits, predictions = text_cnn.gen_result()
 
-    output_weights = tf.get_variable(
-        "output_weights", [num_labels, hidden_size],
-        initializer=tf.truncated_normal_initializer(stddev=0.02))
-
-    output_bias = tf.get_variable(
-        "output_bias", [num_labels], initializer=tf.zeros_initializer())
-
-    with tf.variable_scope("loss"):
-        if is_training:
-            output_layer = tf.nn.dropout(output_layer, keep_prob=0.9)
-
-        logits = tf.matmul(output_layer, output_weights, transpose_b=True)
-        logits = tf.nn.bias_add(logits, output_bias)
-        probabilities = tf.nn.softmax(logits, axis=-1)
-        log_probs = tf.nn.log_softmax(logits, axis=-1)
-
-        one_hot_labels = tf.one_hot(labels, depth=num_labels, dtype=tf.float32)
-
-        per_example_loss = -tf.reduce_sum(one_hot_labels * log_probs, axis=-1)
-        loss = tf.reduce_mean(per_example_loss)
-
-        return (loss, per_example_loss, logits, probabilities)
+    return loss, logits, predictions
 
 
 def model_fn_builder(bert_config, num_labels, init_checkpoint, learning_rate,
@@ -275,7 +257,7 @@ def model_fn_builder(bert_config, num_labels, init_checkpoint, learning_rate,
 
         is_training = (mode == tf.estimator.ModeKeys.TRAIN)
 
-        (total_loss, per_example_loss, logits, probabilities) = create_model(
+        (total_loss, logits, predictions) = create_model(
             bert_config, is_training, input_ids, input_mask, segment_ids, label_ids,
             num_labels, use_one_hot_embeddings)
 
@@ -307,17 +289,21 @@ def model_fn_builder(bert_config, num_labels, init_checkpoint, learning_rate,
                 scaffold_fn=scaffold_fn)
         elif mode == tf.estimator.ModeKeys.EVAL:
 
-            def metric_fn(per_example_loss, label_ids, logits, is_real_example):
+            def metric_fn(label_ids, logits):
                 predictions = tf.argmax(logits, axis=-1, output_type=tf.int32)
                 accuracy = tf.metrics.accuracy(
-                    labels=label_ids, predictions=predictions, weights=is_real_example)
-                loss = tf.metrics.mean(values=per_example_loss, weights=is_real_example)
+                    labels=label_ids, predictions=predictions)
+
+                precision = tf.metrics.precision(labels=label_ids, predictions=predictions)
+                recall = tf.metrics.recall(labels=label_ids, predictions=predictions)
+
                 return {
                     "eval_accuracy": accuracy,
-                    "eval_loss": loss,
+                    "eval_precision": precision,
+                    "eval_recall": recall,
                 }
 
-            eval_metrics = (metric_fn, [per_example_loss, label_ids, logits, is_real_example])
+            eval_metrics = (metric_fn, [label_ids, logits])
             output_spec = tf.contrib.tpu.TPUEstimatorSpec(
                 mode=mode,
                 loss=total_loss,
@@ -326,7 +312,7 @@ def model_fn_builder(bert_config, num_labels, init_checkpoint, learning_rate,
         else:
             output_spec = tf.contrib.tpu.TPUEstimatorSpec(
                 mode=mode,
-                predictions={"probabilities": probabilities},
+                predictions=predictions,
                 scaffold_fn=scaffold_fn)
         return output_spec
 
